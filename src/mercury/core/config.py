@@ -316,7 +316,7 @@ class StrategyConfig(BaseModel):
     trendline: TrendlineConfig | None = None
 
     @model_validator(mode="after")
-    def _check_management_exclusive(self) -> "StrategyConfig":
+    def _check_management_exclusive(self) -> StrategyConfig:
         if self.ict is not None and self.trendline is not None:
             raise ValueError(
                 f"strategy '{self.id}' declares both 'ict' and 'trendline'; "
@@ -485,6 +485,43 @@ class SignalProviderConfig(BaseModel):
     webhook: WebhookConfig = WebhookConfig()
 
 
+# ── Eden OS agent mesh (services/eden) ────────────────────────
+EDEN_TRADING_CAPABILITIES: list[str] = [
+    "trading.list_proposals",
+    "trading.approve",
+    "trading.promote",
+    "trading.promote_live",
+    "trading.demote",
+    "trading.kill_switch",
+    "trading.stages",
+    "trading.health",
+    "trading.backtest",
+]
+
+
+class EdenAgentConfig(BaseModel):
+    """Outbound-only Eden agent-mesh client (``EdenAgentService``).
+
+    Environment-variable names deliberately mirror Eden's own
+    ``agent_runtime/config.py`` so both repos read as one system (see
+    ``.env.example``). The Ed25519 identity key is never configured via env
+    or YAML — it is generated on first connect and persisted at
+    ``{paths.data_dir}/eden/keys/{agent_id}_key``, and needs one-time owner
+    approval on the Eden side before commands dispatch.
+    """
+
+    enabled: bool = False
+    url: str = "ws://localhost:8765"
+    agent_id: str = "mercury_trader"
+    agent_name: str = "Mercury Trader"
+    risk_tier: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"] = "HIGH"
+    capabilities: list[str] = Field(default_factory=lambda: list(EDEN_TRADING_CAPABILITIES))
+    heartbeat_interval: float = 30.0
+    reconnect_base_delay: float = 1.0
+    reconnect_max_delay: float = 60.0
+    reconnect_backoff_factor: float = 2.0
+
+
 class ProvidersConfig(BaseModel):
     broker: BrokerConfig = BrokerConfig()
     data: DataProviderConfig = DataProviderConfig()
@@ -492,6 +529,7 @@ class ProvidersConfig(BaseModel):
     llm: LLMProviderConfig = LLMProviderConfig()
     notifications: NotificationsConfig = NotificationsConfig()
     signal: SignalProviderConfig = SignalProviderConfig()
+    eden: EdenAgentConfig = EdenAgentConfig()
 
 
 # ──────────────────────────────────────────────────────────────
@@ -627,5 +665,33 @@ def load_config(config_dir: str | Path | None = None, *, environment: str | None
         mode_ = os.getenv("HERMES_LLM_PROVIDER", "")
         if mode_ in {"hybrid", "local", "external", "none"}:
             settings.providers.llm.mode = cast(Literal["hybrid", "local", "external", "none"], mode_)
+
+    # ── Eden OS agent mesh ───────────────────────────────────
+    # Same variable names as Eden's agent_runtime/config.py (from_env).
+    # EDEN_AGENT_ENABLED is Mercury-side only: the integration stays off
+    # until explicitly turned on.
+    eden = settings.providers.eden
+    if os.getenv("EDEN_AGENT_ENABLED") is not None:
+        eden.enabled = os.getenv("EDEN_AGENT_ENABLED", "").strip().lower() in ("1", "true", "yes")
+    if os.getenv("EDEN_URL"):
+        eden.url = os.getenv("EDEN_URL", "").strip()
+    if os.getenv("EDEN_AGENT_ID"):
+        eden.agent_id = os.getenv("EDEN_AGENT_ID", "").strip()
+    if os.getenv("EDEN_AGENT_NAME"):
+        eden.agent_name = os.getenv("EDEN_AGENT_NAME", "")
+    tier = (os.getenv("EDEN_AGENT_RISK_TIER") or "").strip().upper()
+    if tier in ("LOW", "MEDIUM", "HIGH", "CRITICAL"):
+        eden.risk_tier = cast(Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"], tier)
+    if os.getenv("EDEN_AGENT_CAPABILITIES"):
+        eden.capabilities = [c.strip() for c in os.getenv("EDEN_AGENT_CAPABILITIES", "").split(",") if c.strip()]
+    for env_name, attr, _default in (
+        ("EDEN_HEARTBEAT_INTERVAL", "heartbeat_interval", 30.0),
+        ("EDEN_RECONNECT_BASE_DELAY", "reconnect_base_delay", 1.0),
+        ("EDEN_RECONNECT_MAX_DELAY", "reconnect_max_delay", 60.0),
+        ("EDEN_RECONNECT_BACKOFF_FACTOR", "reconnect_backoff_factor", 2.0),
+    ):
+        raw = os.getenv(env_name)
+        if raw:
+            setattr(eden, attr, float(raw))
 
     return settings

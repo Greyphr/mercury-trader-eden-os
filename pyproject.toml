@@ -21,6 +21,10 @@ dependencies = [
     "apscheduler>=3.10,<4",
     "fastapi>=0.111",
     "uvicorn>=0.30",
+    # Eden agent-mesh client (src/mercury/services/eden): asyncio WebSocket client
+    "websockets>=13,<16",
+    # Eden agent-mesh identity: Ed25519 keypair for challenge-response auth
+    "cryptography>=42",
 ]
 
 [project.optional-dependencies]

@@ -69,3 +69,18 @@ signal:
     # REQUIRED when deployment.mode is live (from SIGNAL_WEBHOOK_SECRET);
     # without it the server refuses to start / the startup gate blocks trading.
     secret: ""                 # from SIGNAL_WEBHOOK_SECRET
+
+eden:
+  # Outbound-only agent-mesh client (Eden OS device_terminals WebSocket).
+  # Disabled by default: flip EDEN_AGENT_ENABLED=true only when ready to
+  # test the agent-mesh wiring itself. Every field can be overridden by
+  # env vars using the same names as Eden's agent_runtime/config.py.
+  enabled: false               # from EDEN_AGENT_ENABLED
+  url: ws://localhost:8765     # from EDEN_URL
+  agent_id: mercury_trader     # from EDEN_AGENT_ID
+  agent_name: Mercury Trader   # from EDEN_AGENT_NAME
+  risk_tier: HIGH              # from EDEN_AGENT_RISK_TIER (LOW|MEDIUM|HIGH|CRITICAL)
+  heartbeat_interval: 30.0     # from EDEN_HEARTBEAT_INTERVAL
+  reconnect_base_delay: 1.0    # from EDEN_RECONNECT_BASE_DELAY
+  reconnect_max_delay: 60.0    # from EDEN_RECONNECT_MAX_DELAY
+  reconnect_backoff_factor: 2.0  # from EDEN_RECONNECT_BACKOFF_FACTOR

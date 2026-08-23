@@ -11,3 +11,7 @@ apscheduler>=3.10,<4
 fastapi>=0.111
 uvicorn>=0.30
 jsonschema>=4.20
+# Eden agent-mesh client (src/mercury/services/eden): asyncio WebSocket client
+websockets>=13,<16
+# Eden agent-mesh identity (services/eden/crypto.py): Ed25519 keypair for challenge-response auth
+cryptography>=42

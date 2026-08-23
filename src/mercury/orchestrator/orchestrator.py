@@ -20,6 +20,7 @@ from mercury.core.events import Event, EventBus
 from mercury.core.logging import get_logger, setup_logging
 from mercury.services.analytics.service import AnalyticsService
 from mercury.services.data.collector import DataCollectorService
+from mercury.services.eden.service import EdenAgentService
 from mercury.services.execution.broker import PaperBrokerAdapter
 from mercury.services.execution.service import ExecutionService
 from mercury.services.hermes.service import HermesService
@@ -29,6 +30,7 @@ from mercury.services.notifications.service import NotificationService
 from mercury.services.promotion.service import PromotionService
 from mercury.services.risk.service import RiskManagerService
 from mercury.services.signal.service import SignalService
+from mercury.services.status_export.service import StatusExportService
 from mercury.services.strategy.engine import StrategyEngineService
 
 logger = get_logger("orchestrator")
@@ -78,6 +80,18 @@ class MercuryOrchestrator:
         self.risk = RiskManagerService(news_service=self.news, **kwargs)
         self.risk.set_equity_provider(lambda: self.execution.broker.account_equity() if self.execution.broker else 0.0)
 
+        self.status_export = StatusExportService(execution=self.execution, **kwargs)
+
+        # Eden agent-mesh client: outbound-only, OFF by default
+        # (providers.eden.enabled / EDEN_AGENT_ENABLED). Wired last so it can
+        # reference promotion/learning/risk directly.
+        self.eden_agent = EdenAgentService(
+            promotion=self.promotion,
+            learning=self.learning,
+            risk=self.risk,
+            **kwargs,
+        )
+
         self.services = [
             self.collector,
             self.news,
@@ -90,6 +104,8 @@ class MercuryOrchestrator:
             self.analytics,
             self.hermes,
             self.risk,
+            self.status_export,
+            self.eden_agent,
         ]
 
     # ── lifecycle ─────────────────────────────────────────────
@@ -148,6 +164,7 @@ class MercuryOrchestrator:
         self.scheduler.add_job(self.notifications.send_weekly_report, "cron", id="report_weekly", **self._parse_report_schedule(jobs.reports_weekly))
         self.scheduler.add_job(self.notifications.send_monthly_report, "cron", id="report_monthly", **self._parse_report_schedule(jobs.reports_monthly))
         self.scheduler.add_job(self._health_check, "interval", seconds=jobs.health_check, id="health")
+        self.scheduler.add_job(self.status_export.tick, "interval", seconds=self.status_export.poll_interval_seconds, id="status_export")
         self.scheduler.start()
 
     @staticmethod
