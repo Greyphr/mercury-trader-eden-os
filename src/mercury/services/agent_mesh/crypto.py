@@ -1,4 +1,4 @@
-"""Ed25519 identity keypair for the Eden agent-mesh client.
+"""Ed25519 identity keypair for the agent-mesh client.
 
 Native reimplementation of Eden ``agent_runtime/crypto.py`` (``AgentKeyPair``
 + ``load_or_generate_keypair``), which itself is declared "code parity" with

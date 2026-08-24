@@ -45,12 +45,12 @@ def _open_record(db, ticket: str, symbol: str = "GOLD") -> int:
 
 
 @pytest.mark.asyncio
-async def test_startup_orphan_blocks_trading_gate(settings, db):
+async def test_startup_orphan_blocks_trading_gate(paper_settings, db):
     bus = EventBus()
     critical: list[Event] = []
     bus.subscribe("system.critical", lambda e: critical.append(e))
 
-    svc = ExecutionService(bus=bus, settings=settings, db=db)
+    svc = ExecutionService(bus=bus, settings=paper_settings, db=db)
     broker = PaperBrokerAdapter(contract_size=100.0)
     broker.connect()
     _orphan_seed(broker)
@@ -63,7 +63,7 @@ async def test_startup_orphan_blocks_trading_gate(settings, db):
     assert "no matching TradeRecord" in critical[0].payload["error"]
 
     gate = StartupValidationGate(
-        settings=settings,
+        settings=paper_settings,
         db=db,
         execution=svc,
         collector=_StubCollector(),
@@ -77,11 +77,11 @@ async def test_startup_orphan_blocks_trading_gate(settings, db):
 
 
 @pytest.mark.asyncio
-async def test_startup_orphan_does_not_block_gate_when_clean(settings, db):
-    svc = ExecutionService(bus=EventBus(), settings=settings, db=db)
+async def test_startup_orphan_does_not_block_gate_when_clean(paper_settings, db):
+    svc = ExecutionService(bus=EventBus(), settings=paper_settings, db=db)
     await svc.start()
     gate = StartupValidationGate(
-        settings=settings,
+        settings=paper_settings,
         db=db,
         execution=svc,
         collector=_StubCollector(),
@@ -93,12 +93,12 @@ async def test_startup_orphan_does_not_block_gate_when_clean(settings, db):
 
 
 @pytest.mark.asyncio
-async def test_periodic_orphan_alerts_once_per_ticket(settings, db):
+async def test_periodic_orphan_alerts_once_per_ticket(paper_settings, db):
     bus = EventBus()
     critical: list[Event] = []
     bus.subscribe("system.critical", lambda e: critical.append(e))
 
-    svc = ExecutionService(bus=bus, settings=settings, db=db)
+    svc = ExecutionService(bus=bus, settings=paper_settings, db=db)
     await svc.start()
     _orphan_seed(svc._broker)
 
@@ -113,12 +113,12 @@ async def test_periodic_orphan_alerts_once_per_ticket(settings, db):
 
 
 @pytest.mark.asyncio
-async def test_open_record_missing_at_broker_flags_manual_review(settings, db):
+async def test_open_record_missing_at_broker_flags_manual_review(paper_settings, db):
     bus = EventBus()
     critical: list[Event] = []
     bus.subscribe("system.critical", lambda e: critical.append(e))
 
-    svc = ExecutionService(bus=bus, settings=settings, db=db)
+    svc = ExecutionService(bus=bus, settings=paper_settings, db=db)
     await svc.start()
     record_id = _open_record(db, "ghost-1")
 
@@ -139,8 +139,8 @@ async def test_open_record_missing_at_broker_flags_manual_review(settings, db):
 
 
 @pytest.mark.asyncio
-async def test_open_record_missing_at_broker_settles_from_history(settings, db):
-    svc = ExecutionService(bus=EventBus(), settings=settings, db=db)
+async def test_open_record_missing_at_broker_settles_from_history(paper_settings, db):
+    svc = ExecutionService(bus=EventBus(), settings=paper_settings, db=db)
     await svc.start()
     ticket = _orphan_seed(svc._broker)
     closed = svc._broker.close_position_trade(ticket, reason="sl", price=2390.0)
@@ -160,12 +160,12 @@ async def test_open_record_missing_at_broker_settles_from_history(settings, db):
 
 
 @pytest.mark.asyncio
-async def test_reconcile_batches_multiple_issues_into_one_critical(settings, db):
+async def test_reconcile_batches_multiple_issues_into_one_critical(paper_settings, db):
     bus = EventBus()
     critical: list[Event] = []
     bus.subscribe("system.critical", lambda e: critical.append(e))
 
-    svc = ExecutionService(bus=bus, settings=settings, db=db)
+    svc = ExecutionService(bus=bus, settings=paper_settings, db=db)
     await svc.start()
     t1 = _orphan_seed(svc._broker)
     t2 = _orphan_seed(svc._broker)
@@ -187,12 +187,12 @@ async def test_reconcile_batches_multiple_issues_into_one_critical(settings, db)
 
 
 @pytest.mark.asyncio
-async def test_resolve_missing_position_ad_hoc_publishes_per_record(settings, db):
+async def test_resolve_missing_position_ad_hoc_publishes_per_record(paper_settings, db):
     bus = EventBus()
     critical: list[Event] = []
     bus.subscribe("system.critical", lambda e: critical.append(e))
 
-    svc = ExecutionService(bus=bus, settings=settings, db=db)
+    svc = ExecutionService(bus=bus, settings=paper_settings, db=db)
     await svc.start()
     record_id = _open_record(db, "ghost-2")
     with db.session() as session:

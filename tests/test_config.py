@@ -1,3 +1,4 @@
+from config_facts import base_yaml, database_name, default_environment_name
 from pydantic import ValidationError
 
 from mercury.core.config import Settings, load_config, redact_database_url
@@ -10,8 +11,11 @@ def test_config_loads(settings):
     assert len(settings.strategies.strategies) >= 1
 
 
-def test_config_defaults_paper(settings):
-    assert settings.base.deployment.mode == "paper"
+def test_config_matches_base_yaml(settings):
+    """Loader output mirrors config/base.yaml (mode + active environment)."""
+    raw = base_yaml()
+    assert settings.base.deployment.mode == raw["deployment"]["mode"]
+    assert settings.base.environment == raw["environment"]
 
 
 def test_risk_defaults(settings):
@@ -43,9 +47,16 @@ def test_database_url_default():
 
 
 def test_blank_database_url_falls_back_to_environment_default(monkeypatch):
+    # A blank DATABASE_URL must fall through to the active environment
+    # profile's database (see environments.yaml), not a hardcoded name.
+    monkeypatch.delenv("MERCURY_ENV", raising=False)
     monkeypatch.setenv("DATABASE_URL", "")
     s = load_config()
-    assert s.database_url == "postgresql+psycopg://mercury:mercury@localhost:5432/mercury_development"
+    expected = (
+        "postgresql+psycopg://mercury:mercury@localhost:5432/"
+        f"{database_name(default_environment_name())}"
+    )
+    assert s.database_url == expected
 
 
 def test_postgres_engine_has_connect_timeout():

@@ -11,7 +11,10 @@ apscheduler>=3.10,<4
 fastapi>=0.111
 uvicorn>=0.30
 jsonschema>=4.20
-# Eden agent-mesh client (src/mercury/services/eden): asyncio WebSocket client
-websockets>=13,<16
-# Eden agent-mesh identity (services/eden/crypto.py): Ed25519 keypair for challenge-response auth
+# Eden agent-mesh client (src/mercury/services/agent_mesh): sync WebSocket client
+websocket-client>=1.6
+# Eden agent-mesh identity (services/agent_mesh/crypto.py): Ed25519 keypair for challenge-response auth
 cryptography>=42
+# MT5 terminal bridge (execution/broker.py + data/providers.py): live/demo orders & market data.
+# Official package is Windows-only; the marker skips it on other dev machines.
+MetaTrader5>=5.0.45; sys_platform == "win32"

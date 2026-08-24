@@ -1,14 +1,33 @@
 """Notification service: subscribes to system events, formats messages, and
-sends via the active notifier. Also builds daily/weekly/monthly reports."""
+sends via the active notifier. Also builds daily/weekly/monthly reports.
+
+Delivery channels (additive — Telegram remains authoritative):
+- Telegram (or console fallback) via ``build_notifier``
+- Eden agent mesh (optional): whitelisted trade/critical/promotion events are
+  pushed near-real-time as ``agent.event`` frames, and report snapshots ride
+  passively inside heartbeat telemetry. See services/agent_mesh.
+"""
 
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime
 from typing import Any
 
 from mercury.core.events import Event
 from mercury.services.analytics.metrics import compute_metrics_snapshot
 from mercury.services.base import Service
 from mercury.services.notifications.providers import Notifier, build_notifier
+
+#: Mercury bus event → Eden agent.event whitelist name
+#: (device_terminals/server.py _AGENT_EVENT_WHITELIST).
+_EDEN_EVENT_MAP: dict[str, str] = {
+    "trade.opened": "trading.trade.opened",
+    "trade.closed": "trading.trade.closed",
+    "system.critical": "trading.risk.alert",
+    "strategy.promoted": "trading.strategy.promoted",
+    "hermes.proposal.backtested": "trading.proposal.created",
+}
 
 
 class NotificationService(Service):
@@ -17,6 +36,12 @@ class NotificationService(Service):
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._notifier: Notifier = build_notifier(self.settings)
+        # Optional AgentMeshService (injected by the orchestrator once built).
+        self._mesh: Any = None
+
+    def set_mesh_publisher(self, mesh: Any) -> None:
+        """Attach the agent-mesh service as a secondary delivery channel."""
+        self._mesh = mesh
 
     async def start(self) -> None:
         await super().start()
@@ -34,6 +59,53 @@ class NotificationService(Service):
         await self._notifier.close()
         await super().stop()
 
+    # ── eden mesh forwarding (best-effort, never blocks Telegram) ──
+
+    @staticmethod
+    def _jsonable(value: Any) -> Any:
+        try:
+            json.dumps(value)
+            return value
+        except (TypeError, ValueError):
+            return str(value)
+
+    def _forward_mesh_event(
+        self, mercury_event: str, payload: dict[str, Any], level: str
+    ) -> None:
+        """Push one event to Eden's agent.event channel if wired.
+
+        Sync + non-blocking; safe from async handlers. Failures degrade to a
+        debug log — Telegram already carries the authoritative copy.
+        """
+        event_name = _EDEN_EVENT_MAP.get(mercury_event)
+        if event_name is None or self._mesh is None:
+            return
+        clean = {k: self._jsonable(v) for k, v in payload.items() if v is not None}
+        try:
+            sent = self._mesh.publish_event(event_name, clean, severity=level)
+        except Exception as exc:  # noqa: BLE001
+            self.logger.debug("mesh forward of %s failed: %s", mercury_event, exc)
+            return
+        if not sent:
+            self.logger.debug("mesh not connected — %s not forwarded", mercury_event)
+
+    def _publish_report(self, period: str, metrics: dict[str, Any]) -> None:
+        """Expose the newest report via heartbeat telemetry (option-b path)."""
+        if self._mesh is None:
+            return
+        try:
+            self._mesh.set_latest_report(
+                {
+                    "period": period,
+                    "generated_at": datetime.now(UTC).isoformat(),
+                    "metrics": {
+                        k: self._jsonable(v) for k, v in metrics.items() if v is not None
+                    },
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.logger.debug("mesh report snapshot failed: %s", exc)
+
     # ── event handlers ────────────────────────────────────────
     async def _on_trade_opened(self, event: Event) -> None:
         p = event.payload or {}
@@ -48,6 +120,19 @@ class NotificationService(Service):
                 f"Volume: {p.get('volume')}"
             ),
             level="info",
+        )
+        self._forward_mesh_event(
+            "trade.opened",
+            {
+                "symbol": signal.symbol if signal else "XAUUSD",
+                "direction": direction,
+                "price": float(signal.price) if signal and signal.price is not None else None,
+                "sl": float(signal.sl) if signal and signal.sl is not None else None,
+                "tp": float(signal.tp) if signal and signal.tp is not None else None,
+                "volume": p.get("volume"),
+                "strategy_id": getattr(signal, "strategy_id", None),
+            },
+            "info",
         )
 
     async def _on_trade_closed(self, event: Event) -> None:
@@ -65,6 +150,19 @@ class NotificationService(Service):
             ),
             level="info",
         )
+        self._forward_mesh_event(
+            "trade.closed",
+            {
+                "symbol": trade.symbol,
+                "direction": trade.direction,
+                "entry": float(trade.entry) if trade.entry is not None else None,
+                "exit": float(trade.close_price) if trade.close_price is not None else None,
+                "pnl": float(trade.pnl) if trade.pnl is not None else None,
+                "pnl_r": float(trade.pnl_r) if trade.pnl_r is not None else None,
+                "close_reason": trade.close_reason,
+            },
+            "info",
+        )
 
     async def _on_trade_rejected(self, event: Event) -> None:
         p = event.payload or {}
@@ -78,6 +176,7 @@ class NotificationService(Service):
         await self._notifier.send(
             title="Signal Rejected", message="\n".join(f"• {r}" for r in reasons), level="warn"
         )
+        # no whitelist entry for rejections — Telegram only
 
     async def _on_proposal_backtested(self, event: Event) -> None:
         p = event.payload or {}
@@ -92,6 +191,11 @@ class NotificationService(Service):
             f"| Expectancy R: {summary.get('expectancy_r')}"
         )
         await self._notifier.send(title=title, message=message, level=level)
+        self._forward_mesh_event(
+            "hermes.proposal.backtested",
+            {"proposal_id": p.get("proposal_id"), "passed": bool(passed), "metrics": summary},
+            level,
+        )
 
     async def _on_strategy_promoted(self, event: Event) -> None:
         p = event.payload or {}
@@ -103,27 +207,44 @@ class NotificationService(Service):
             ),
             level="info",
         )
+        self._forward_mesh_event(
+            "strategy.promoted",
+            {
+                "strategy_id": p.get("strategy_id"),
+                "from_stage": p.get("from_stage"),
+                "to_stage": p.get("to_stage"),
+                "actor": p.get("actor"),
+                "reason": p.get("reason"),
+            },
+            "info",
+        )
 
     async def _on_critical(self, event: Event) -> None:
         p = event.payload or {}
         await self._notifier.send(
             title="Critical System Error", message=p.get("error", "unknown"), level="critical"
         )
+        self._forward_mesh_event(
+            "system.critical", {"error": str(p.get("error", "unknown"))}, "critical"
+        )
 
     # ── reports ───────────────────────────────────────────────
     async def send_daily_report(self) -> bool:
         metrics = compute_metrics_snapshot(self.db, period="daily")
         message = self._format_report("Daily Report", metrics)
+        self._publish_report("daily", metrics)
         return await self._notifier.send(title="📊 Daily Report", message=message, level="info")
 
     async def send_weekly_report(self) -> bool:
         metrics = compute_metrics_snapshot(self.db, period="weekly")
+        self._publish_report("weekly", metrics)
         return await self._notifier.send(
             title="📈 Weekly Report", message=self._format_report("Weekly", metrics), level="info"
         )
 
     async def send_monthly_report(self) -> bool:
         metrics = compute_metrics_snapshot(self.db, period="monthly")
+        self._publish_report("monthly", metrics)
         return await self._notifier.send(
             title="📉 Monthly Report", message=self._format_report("Monthly", metrics), level="info"
         )

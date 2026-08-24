@@ -10,6 +10,8 @@ Commands:
     demote STRATEGY_ID --to STAGE    Roll a strategy back a stage
     stages                    Show lifecycle stage of each strategy
     kill-switch on|off        Toggle the global kill switch
+    enroll                    Register this machine's identity with Eden
+                              (one-shot; prints pairing status and exits)
 
 Options:
     --env NAME                Environment profile (config/environments.yaml);
@@ -66,6 +68,12 @@ def _build_parser() -> argparse.ArgumentParser:
     stages = sub.add_parser("stages", help="show lifecycle stage of each strategy")
     stages.add_argument("--strategy", default=None, help="show only this strategy")
     stages.add_argument("--history", action="store_true", help="also print promotion audit history")
+
+    sub.add_parser(
+        "enroll",
+        help="one-shot Eden agent registration: generate/persist the Ed25519 "
+        "identity, connect out to Eden, print pairing status, exit",
+    )
     return parser
 
 
@@ -130,6 +138,44 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "stages":
         _cli_stages(db, settings, args)
         return
+
+    if args.command == "enroll":
+        _cli_enroll(settings)
+        return
+
+
+def _cli_enroll(settings) -> None:
+    """One-shot Eden registration (doc §5): ensure identity → connect out →
+    register → print pairing status → exit. Never starts the background loop.
+    """
+    from mercury.services.agent_mesh.client import MercuryAgentClient
+    from mercury.services.agent_mesh.config import AgentMeshConfig
+    from mercury.services.agent_mesh.crypto import load_or_generate_keypair
+    from mercury.services.agent_mesh.handlers import MercuryCommandHandler
+
+    config = AgentMeshConfig.from_settings(settings)
+    keypair = load_or_generate_keypair(config.key_dir_for(settings), config.agent_id)
+    handler = MercuryCommandHandler(settings=settings)
+    client = MercuryAgentClient(config=config, keypair=keypair, handlers=handler.handlers)
+
+    print(f"enrolling with Eden at {config.url} as '{config.agent_id}'")
+    print(f"public key: {keypair.public_key_b64}")
+    try:
+        registered = client.enroll_once()
+    except Exception as exc:  # noqa: BLE001 — CLI: report and exit nonzero
+        print(f"enrollment failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+    print(f"session: {registered.session_id or '-'}")
+    print(f"paired: {str(registered.paired).lower()}")
+    print(f"allowed capabilities: {registered.allowed_caps}")
+    if registered.rejected_caps:
+        print(f"rejected capabilities: {registered.rejected_caps}")
+    if not registered.paired:
+        print(
+            "NOT paired yet — approve this identity on the Eden side once; "
+            "trading.* commands will be rejected until then."
+        )
+        sys.exit(2)
 
 
 def _cli_backtest(settings, db, args) -> None:

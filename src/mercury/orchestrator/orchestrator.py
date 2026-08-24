@@ -18,9 +18,9 @@ from mercury.core.config import Settings, load_config, redact_database_url
 from mercury.core.db import Database
 from mercury.core.events import Event, EventBus
 from mercury.core.logging import get_logger, setup_logging
+from mercury.services.agent_mesh.service import AgentMeshService
 from mercury.services.analytics.service import AnalyticsService
 from mercury.services.data.collector import DataCollectorService
-from mercury.services.eden.service import EdenAgentService
 from mercury.services.execution.broker import PaperBrokerAdapter
 from mercury.services.execution.service import ExecutionService
 from mercury.services.hermes.service import HermesService
@@ -84,13 +84,17 @@ class MercuryOrchestrator:
 
         # Eden agent-mesh client: outbound-only, OFF by default
         # (providers.eden.enabled / EDEN_AGENT_ENABLED). Wired last so it can
-        # reference promotion/learning/risk directly.
-        self.eden_agent = EdenAgentService(
+        # reference promotion/learning/risk/execution directly.
+        self.agent_mesh = AgentMeshService(
             promotion=self.promotion,
             learning=self.learning,
             risk=self.risk,
+            execution=self.execution,
             **kwargs,
         )
+        # Secondary delivery channel: trade/critical events push to Eden as
+        # agent.event frames; report snapshots ride heartbeat telemetry.
+        self.notifications.set_mesh_publisher(self.agent_mesh)
 
         self.services = [
             self.collector,
@@ -105,7 +109,7 @@ class MercuryOrchestrator:
             self.hermes,
             self.risk,
             self.status_export,
-            self.eden_agent,
+            self.agent_mesh,
         ]
 
     # ── lifecycle ─────────────────────────────────────────────

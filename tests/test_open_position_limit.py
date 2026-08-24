@@ -39,10 +39,10 @@ def _seed_open_trades(db, n):
             )
 
 
-def _risk_service(settings, db):
-    settings.risk.guards.session_check = False
-    settings.risk.guards.news_blackout_minutes = 0
-    svc = RiskManagerService(bus=EventBus(), settings=settings, db=db)
+def _risk_service(paper_settings, db):
+    paper_settings.risk.guards.session_check = False
+    paper_settings.risk.guards.news_blackout_minutes = 0
+    svc = RiskManagerService(bus=EventBus(), settings=paper_settings, db=db)
     svc.set_equity_provider(lambda: 10000.0)
     return svc
 
@@ -71,37 +71,37 @@ def test_config_loads_five_from_risk_yaml(settings):
 
 
 @pytest.mark.asyncio
-async def test_risk_rejects_at_limit(settings, db):
+async def test_risk_rejects_at_limit(paper_settings, db):
     _seed_open_trades(db, 5)
-    svc = _risk_service(settings, db)
+    svc = _risk_service(paper_settings, db)
     decision = svc.evaluate(_signal(), {"confidence": 0.9})
     assert not decision.approved
     assert any("max open positions" in r for r in decision.reasons)
 
 
 @pytest.mark.asyncio
-async def test_risk_rejects_at_limit_even_with_high_confidence(settings, db):
+async def test_risk_rejects_at_limit_even_with_high_confidence(paper_settings, db):
     _seed_open_trades(db, 5)
-    svc = _risk_service(settings, db)
+    svc = _risk_service(paper_settings, db)
     decision = svc.evaluate(_signal(), {"confidence": 0.99})
     assert not decision.approved
     assert any("max open positions" in r for r in decision.reasons)
 
 
 @pytest.mark.asyncio
-async def test_risk_approves_below_limit(settings, db):
+async def test_risk_approves_below_limit(paper_settings, db):
     _seed_open_trades(db, 4)
-    svc = _risk_service(settings, db)
+    svc = _risk_service(paper_settings, db)
     decision = svc.evaluate(_signal(), {"confidence": 0.9})
     assert decision.approved
     assert decision.volume > 0
 
 
 @pytest.mark.asyncio
-async def test_execution_rejects_when_at_limit(settings, db):
+async def test_execution_rejects_when_at_limit(paper_settings, db):
     _seed_open_trades(db, 5)
     bus = EventBus()
-    svc = ExecutionService(bus=bus, settings=settings, db=db)
+    svc = ExecutionService(bus=bus, settings=paper_settings, db=db)
     await svc.start()
 
     rejected: list[Event] = []
@@ -118,10 +118,10 @@ async def test_execution_rejects_when_at_limit(settings, db):
 
 
 @pytest.mark.asyncio
-async def test_execution_opens_when_below_limit(settings, db):
+async def test_execution_opens_when_below_limit(paper_settings, db):
     _seed_open_trades(db, 4)
     bus = EventBus()
-    svc = ExecutionService(bus=bus, settings=settings, db=db)
+    svc = ExecutionService(bus=bus, settings=paper_settings, db=db)
     await svc.start()
     _seed_quote(svc)
 
@@ -139,10 +139,10 @@ async def test_execution_opens_when_below_limit(settings, db):
 
 
 @pytest.mark.asyncio
-async def test_execution_hard_cap_applies_after_limit_then_allows_when_closed(settings, db):
+async def test_execution_hard_cap_applies_after_limit_then_allows_when_closed(paper_settings, db):
     _seed_open_trades(db, 5)
     bus = EventBus()
-    svc = ExecutionService(bus=bus, settings=settings, db=db)
+    svc = ExecutionService(bus=bus, settings=paper_settings, db=db)
     await svc.start()
     _seed_quote(svc)
 
@@ -168,17 +168,17 @@ async def test_execution_hard_cap_applies_after_limit_then_allows_when_closed(se
 
 
 @pytest.mark.asyncio
-async def test_concurrent_approved_signals_respect_max_open(tmp_path, settings):
+async def test_concurrent_approved_signals_respect_max_open(tmp_path, paper_settings):
     from mercury.core.db import Database
 
     database = Database(f"sqlite:///{tmp_path / 'open_limit.db'}")
     database.create_tables()
     bus = EventBus()
-    svc = ExecutionService(bus=bus, settings=settings, db=database)
+    svc = ExecutionService(bus=bus, settings=paper_settings, db=database)
     await svc.start()
     _seed_quote(svc)
 
-    max_open = settings.risk.guards.max_open_positions
+    max_open = paper_settings.risk.guards.max_open_positions
     assert max_open >= 2
 
     def run_signal(signal_id):

@@ -1,4 +1,5 @@
-"""End-to-end coverage of ExecutionService order routing via the paper broker."""
+"""End-to-end coverage of ExecutionService order routing via the paper broker
+(the ``development`` profile in config/environments.yaml)."""
 
 from types import SimpleNamespace
 
@@ -61,9 +62,9 @@ def _open_records(db):
 
 
 @pytest.mark.asyncio
-async def test_approved_signal_fills_broker_and_persists_trade(settings, db):
+async def test_approved_signal_fills_broker_and_persists_trade(paper_settings, db):
     bus = EventBus()
-    svc = ExecutionService(bus=bus, settings=settings, db=db)
+    svc = ExecutionService(bus=bus, settings=paper_settings, db=db)
     await svc.start()
     _seed_quote(svc)
 
@@ -98,10 +99,10 @@ async def test_approved_signal_fills_broker_and_persists_trade(settings, db):
 
 
 @pytest.mark.asyncio
-async def test_rejected_when_max_open_positions_reached(settings, db):
+async def test_rejected_when_max_open_positions_reached(paper_settings, db):
     _seed_open_trades(db, 5)
     bus = EventBus()
-    svc = ExecutionService(bus=bus, settings=settings, db=db)
+    svc = ExecutionService(bus=bus, settings=paper_settings, db=db)
     await svc.start()
     _seed_quote(svc)
 
@@ -118,9 +119,9 @@ async def test_rejected_when_max_open_positions_reached(settings, db):
 
 
 @pytest.mark.asyncio
-async def test_stage_guard_blocks_execution(settings, db):
+async def test_stage_guard_blocks_execution(paper_settings, db):
     bus = EventBus()
-    svc = ExecutionService(bus=bus, settings=settings, db=db)
+    svc = ExecutionService(bus=bus, settings=paper_settings, db=db)
     await svc.start()
     _seed_quote(svc)
     svc.set_stage_guard(lambda strategy_id: False)
@@ -139,9 +140,9 @@ async def test_stage_guard_blocks_execution(settings, db):
 
 
 @pytest.mark.asyncio
-async def test_trading_gate_closed_blocks_execution(settings, db):
+async def test_trading_gate_closed_blocks_execution(paper_settings, db):
     bus = EventBus()
-    svc = ExecutionService(bus=bus, settings=settings, db=db)
+    svc = ExecutionService(bus=bus, settings=paper_settings, db=db)
     await svc.start()
     _seed_quote(svc)
     svc.set_trading_allowed(False)
@@ -158,9 +159,9 @@ async def test_trading_gate_closed_blocks_execution(settings, db):
 
 
 @pytest.mark.asyncio
-async def test_broker_failure_rejected_when_no_quote(settings, db):
+async def test_broker_failure_rejected_when_no_quote(paper_settings, db):
     bus = EventBus()
-    svc = ExecutionService(bus=bus, settings=settings, db=db)
+    svc = ExecutionService(bus=bus, settings=paper_settings, db=db)
     await svc.start()
 
     rejected: list[Event] = []
@@ -176,9 +177,9 @@ async def test_broker_failure_rejected_when_no_quote(settings, db):
 
 
 @pytest.mark.asyncio
-async def test_paper_position_settles_on_tp_hit(settings, db):
+async def test_paper_position_settles_on_tp_hit(paper_settings, db):
     bus = EventBus()
-    svc = ExecutionService(bus=bus, settings=settings, db=db)
+    svc = ExecutionService(bus=bus, settings=paper_settings, db=db)
     await svc.start()
     _seed_quote(svc)
 

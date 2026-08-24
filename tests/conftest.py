@@ -15,6 +15,16 @@ def settings():
 
 
 @pytest.fixture()
+def paper_settings():
+    """The paper-broker profile (``development`` per config/environments.yaml).
+
+    Tests that exercise paper-fill/order-routing behaviour must use this
+    profile; the default deployment profile is MT5-backed.
+    """
+    return load_config(environment="development")
+
+
+@pytest.fixture()
 def db():
     database = Database.in_memory()
     database.create_tables()

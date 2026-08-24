@@ -134,6 +134,7 @@ def test_gate_webhook_secret_passes_in_live_when_set(db, monkeypatch):
 
 
 def test_gate_webhook_secret_not_required_outside_live(settings, db):
+    settings.deployment_mode_override = "paper"
     gate = build_gate(settings, db)
     gate.run()
     result = check(gate, "webhook_secret")

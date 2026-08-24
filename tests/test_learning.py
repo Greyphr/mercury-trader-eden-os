@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from config_facts import strategy_ids
 
 from mercury.core.config import load_config
 from mercury.models.orm import ProposalRecord
@@ -14,10 +15,11 @@ def make_service(db):
     return LearningService(bus=None, settings=load_config(), db=db)  # type: ignore[arg-type]
 
 
-def test_two_strategies_loaded_in_known_order(db):
+def test_strategies_loaded_in_config_file_order(db):
+    """Every strategy declared in config/strategy_*.yaml is loaded, in file order."""
     svc = make_service(db)
     ids = [s.id for s in svc.settings.strategies.strategies]
-    assert ids == ["xauusd_m5_ict", "xauusd_m5_trend"]
+    assert ids == strategy_ids()
 
 
 def test_merge_uses_target_strategy_id_not_list_position(db):

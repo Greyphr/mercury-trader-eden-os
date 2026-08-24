@@ -40,6 +40,8 @@ def _fake_orchestrator(settings):
         send_monthly_report=lambda: None,
     )
     orch.hermes = SimpleNamespace(run_daily_analysis=lambda: None)
+    # Wired by build_services() since the status-export job was added.
+    orch.status_export = SimpleNamespace(tick=lambda: None, poll_interval_seconds=30)
     return orch
 
 

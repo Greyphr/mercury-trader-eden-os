@@ -13,7 +13,10 @@ from mercury.orchestrator.orchestrator import MercuryOrchestrator
 
 @pytest.fixture()
 def integration_settings(tmp_path):
-    settings = load_config()
+    # The paper end-to-end path needs the paper-broker profile
+    # (``development`` in config/environments.yaml); the default deployment
+    # profile is MT5-backed.
+    settings = load_config(environment="development")
     settings.database_url = f"sqlite:///{tmp_path / 'itest.db'}"
     settings.deployment_mode_override = "paper"
     settings.risk.guards.session_check = False

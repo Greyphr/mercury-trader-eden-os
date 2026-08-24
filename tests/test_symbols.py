@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 import pytest
+from config_facts import database_name, default_environment_name, environment_profile
 
 from mercury.core.config import EnvironmentConfig, EnvironmentsConfig, load_config
 from mercury.core.symbols import SymbolMappingError, get_symbol_mapper
@@ -59,29 +60,35 @@ def test_mapper_verify_available_missing_preferred(settings, caplog):
 
 
 # ── Environment profiles ──────────────────────────────────────
-def test_default_environment_is_development(settings):
-    env = settings.environment
-    assert env.name == "development"
-    assert env.broker_backend == "paper"
-    assert env.trading_enabled is True
-    assert settings.database_url.endswith("mercury_development")
-    assert settings.base.paths.log_dir == "logs/development"
+def test_default_environment_matches_config(monkeypatch):
+    """The resolved default profile mirrors config/base.yaml + environments.yaml."""
+    monkeypatch.delenv("MERCURY_ENV", raising=False)
+    settings = load_config()
+    profile = environment_profile()
+    assert settings.environment.name == default_environment_name()
+    assert settings.environment.broker_backend == profile["broker_backend"]
+    assert settings.environment.trading_enabled is profile["trading_enabled"]
+    assert settings.database_url.endswith(database_name())
+    assert settings.base.paths.log_dir == profile["log_dir"]
 
 
-def test_environment_selection_via_arg():
+def test_environment_selection_via_arg(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)  # per-env database must apply
     s = load_config(environment="metaquotes_demo")
     assert s.environment.name == "metaquotes_demo"
     assert s.environment.broker_backend == "mt5"
-    assert s.database_url.endswith("mercury_demo")
+    assert s.database_url.endswith(database_name("metaquotes_demo"))
     assert s.base.paths.log_dir == "logs/demo"
 
 
-def test_live_environment_ships_armed_off():
+def test_live_environment_ships_armed_off(monkeypatch):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     s = load_config(environment="exness_live")
+    profile = environment_profile("exness_live")
     assert s.environment.name == "exness_live"
-    assert s.environment.trading_enabled is False
-    assert s.environment.broker_backend == "mt5"
-    assert s.database_url.endswith("mercury_live")
+    assert s.environment.trading_enabled is profile["trading_enabled"] is False
+    assert s.environment.broker_backend == profile["broker_backend"]
+    assert s.database_url.endswith(database_name("exness_live"))
 
 
 def test_environment_selection_via_env_var(monkeypatch):
@@ -111,7 +118,8 @@ def test_per_env_mt5_credential_env_names(monkeypatch):
     assert creds["server"] == "Exness-MT5"
 
 
-def test_environments_config_resolve_default():
+def test_environments_config_resolve_default(monkeypatch):
+    monkeypatch.delenv("MERCURY_ENV", raising=False)
     envs = EnvironmentsConfig(environments={"development": EnvironmentConfig()})
     resolved = envs.resolve(None)
     assert resolved.name == "development"

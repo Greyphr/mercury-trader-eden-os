@@ -100,6 +100,11 @@ recommended; `DATABASE_URL` supports any SQLAlchemy URL.
 
 ## Going live (Exness + MT5)
 
+> The `MetaTrader5` Python package (in `requirements/core.txt`, marked
+> `sys_platform == "win32"`) is installed automatically on Windows; on other
+> dev machines pip skips it and MT5 backends stay unavailable (paper broker
+> still works).
+
 1. **Windows VPS**: run `scripts/setup_vps.ps1` (Python, PostgreSQL, deps).
 2. **MT5 terminal**: run `scripts/setup_mt5.ps1`, then in the terminal:
    - log in to your Exness **live** account,

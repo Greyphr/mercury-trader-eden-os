@@ -10,17 +10,27 @@ Update both sides together when the protocol changes; the dataclass names
 below deliberately match ``agent_runtime/protocol.py`` so a diff is trivial.
 
 Agent (Mercury) → Eden core:
-  agent.register      identity + declared capabilities + risk tier + pubkey
+  register            device-level identity gate REQUIRED as the very first
+                      message on every connection (server.py §_handle_connection
+                      rejects anything else with "expected register")
   challenge_response  base64 Ed25519 signature over the server nonce
+  agent.register      mesh declaration: capabilities + risk tier + pubkey
   agent.result        command execution result, correlated by command_id
-  agent.heartbeat     keepalive
+  agent.heartbeat     keepalive + optional telemetry payload (§7)
 
 Eden core → agent:
+  registered          device-gate ack {"type":"registered",paired,session_id}
   challenge           single-use nonce for Ed25519 challenge-response auth
   agent.registered    negotiation result (session/paired/allowed/rejected/max_risk)
   agent.command       tool execution request (command_id/capability/arguments)
   agent.pong          heartbeat ack
   error               human-readable rejection (e.g. dispatch while unpaired)
+
+The handshake is therefore two-phase: ``register`` → (challenge) →
+``registered``, then ``agent.register`` → (challenge) → ``agent.registered``.
+A paired identity signs one nonce per phase. Note: Eden's own standalone
+``agent_runtime/client.py`` skips phase one and would be rejected by the
+current ``device_terminals/server.py`` build — Mercury follows the server.
 
 Note: the agent's reply to ``agent.command`` is ``agent.result`` — that is
 the shape Eden's own standalone client sends. ``agent.command_result`` is a
@@ -68,10 +78,15 @@ class RegisterMessage:
 
 @dataclass
 class HeartbeatMessage:
-    """Agent keepalive."""
+    """Agent keepalive with an optional telemetry snapshot (doc §7)."""
+
+    telemetry: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {"type": "agent.heartbeat"}
+        msg: dict[str, Any] = {"type": "agent.heartbeat"}
+        if self.telemetry is not None:
+            msg["telemetry"] = self.telemetry
+        return msg
 
 
 @dataclass
@@ -97,6 +112,14 @@ class ResultMessage:
 
 
 # ── Eden core → agent ──────────────────────────────────────────
+
+
+@dataclass
+class DeviceRegisteredMessage:
+    """Server ack for the mandatory device-level ``register`` gate."""
+
+    paired: bool
+    session_id: str
 
 
 @dataclass
@@ -142,6 +165,7 @@ AgentMessage = (
     RegisterMessage
     | HeartbeatMessage
     | ResultMessage
+    | DeviceRegisteredMessage
     | ChallengeMessage
     | RegisteredMessage
     | CommandMessage
@@ -160,6 +184,13 @@ def parse_message(raw: str | bytes) -> AgentMessage | None:
         return None
 
     msg_type = data.get("type", "")
+
+    if msg_type == "registered":
+        # device-gate ack (distinct from agent.registered)
+        return DeviceRegisteredMessage(
+            paired=bool(data.get("paired", False)),
+            session_id=str(data.get("session_id", "")),
+        )
 
     if msg_type == "challenge":
         nonce = data.get("nonce", "")
@@ -186,7 +217,8 @@ def parse_message(raw: str | bytes) -> AgentMessage | None:
             arguments=data.get("arguments") or {},
         )
 
-    if msg_type == "pong":
+    # server.py replies {"type": "agent.pong"}; accept bare "pong" too.
+    if msg_type in ("agent.pong", "pong"):
         return PongMessage()
 
     if msg_type == "error":

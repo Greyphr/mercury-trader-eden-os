@@ -28,8 +28,16 @@ def test_required_stage_per_environment(db):
 
 
 def test_may_trade_in_env_defaults(db):
+    # Explicit paper profile: fresh strategy needs at least the paper stage.
+    dev = make_service(db, environment="development")
+    assert dev.may_trade_in_env("xauusd_m5_trend") == (False, StrategyStage.PAPER)
+    # Default deployment profile (config/base.yaml `environment:`): a fresh
+    # strategy can never trade; report the required stage for that environment.
     svc = make_service(db)
-    assert svc.may_trade_in_env("xauusd_m5_trend") == (False, StrategyStage.PAPER)
+    assert svc.may_trade_in_env("xauusd_m5_trend") == (
+        False,
+        svc.required_stage(),
+    )
 
 
 # ── transitions ───────────────────────────────────────────────
@@ -139,7 +147,8 @@ def test_promote_with_check_gates_rejects_poor_metrics(db):
 
 # ── environment gating ────────────────────────────────────────
 def test_stage_guard_allows_paper_mode_unconditionally(db):
-    svc = make_service(db)  # development, mode=paper
+    svc = make_service(db)  # environment profile is irrelevant outside live mode
+    svc.settings.deployment_mode_override = "paper"
     assert svc.stage_guard("xauusd_m5_trend") is True
 
 
@@ -187,8 +196,9 @@ def _gate_with_promotion(settings, db, promotion):
     )
 
 
-def test_gate_reports_promotion_info_in_development(db):
+def test_gate_reports_promotion_info_outside_live_mode(db):
     settings = load_config()
+    settings.deployment_mode_override = "paper"  # informational outside live mode
     svc = make_service(db)
     gate = _gate_with_promotion(settings, db, svc)
     gate.run()

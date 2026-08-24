@@ -485,14 +485,18 @@ class SignalProviderConfig(BaseModel):
     webhook: WebhookConfig = WebhookConfig()
 
 
-# ── Eden OS agent mesh (services/eden) ────────────────────────
+# ── Eden OS agent mesh (services/agent_mesh) ─────────────────
+# Contract IDs mirror Eden action_layer/trading_mesh/trading_contracts.py.
+# trading.kill_switch is a split pair there; trading.autonomous_live.* are
+# Eden-local and never dispatched to agents, so they are not declared.
 EDEN_TRADING_CAPABILITIES: list[str] = [
     "trading.list_proposals",
     "trading.approve",
     "trading.promote",
     "trading.promote_live",
     "trading.demote",
-    "trading.kill_switch",
+    "trading.kill_switch.enable",
+    "trading.kill_switch.disable",
     "trading.stages",
     "trading.health",
     "trading.backtest",
@@ -500,7 +504,7 @@ EDEN_TRADING_CAPABILITIES: list[str] = [
 
 
 class EdenAgentConfig(BaseModel):
-    """Outbound-only Eden agent-mesh client (``EdenAgentService``).
+    """Outbound-only Eden agent-mesh client (``AgentMeshService``).
 
     Environment-variable names deliberately mirror Eden's own
     ``agent_runtime/config.py`` so both repos read as one system (see
