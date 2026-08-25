@@ -40,14 +40,14 @@ if not exist ".env" (
     exit /b 1
 )
 
-findstr /r /c:"^MT5_LOGIN_DEMO=.\+" .env >nul
+findstr /r /c:"^MT5_LOGIN_DEMO=." .env >nul
 if errorlevel 1 (
     echo [action needed] MT5_LOGIN_DEMO is empty in .env - fill in your MetaQuotes
     echo                 demo account login before running the bot.
     pause
     exit /b 1
 )
-findstr /r /c:"^MT5_PASSWORD_DEMO=.\+" .env >nul
+findstr /r /c:"^MT5_PASSWORD_DEMO=." .env >nul
 if errorlevel 1 (
     echo [action needed] MT5_PASSWORD_DEMO is empty in .env - fill in your MetaQuotes
     echo                 demo account password before running the bot.
@@ -72,7 +72,7 @@ if not "!OLLAMA_CODE!"=="200" (
 )
 
 rem -- 4. Detect an installed Ollama model if OLLAMA_MODEL isn't set --------
-findstr /r /c:"^OLLAMA_MODEL=.\+" .env >nul
+findstr /r /c:"^OLLAMA_MODEL=." .env >nul
 if errorlevel 1 (
     echo [setup] OLLAMA_MODEL not set in .env - checking what's already pulled ...
     set DETECTED_MODEL=
@@ -107,16 +107,55 @@ if not "!LMSTUDIO_CODE!"=="200" (
     echo [ok] LM Studio server is reachable.
 )
 
-findstr /r /c:"^LM_STUDIO_MODEL=.\+" .env >nul
+findstr /r /c:"^LM_STUDIO_MODEL=." .env >nul
 if errorlevel 1 (
-    echo [action needed] LM_STUDIO_MODEL is empty in .env. Open LM Studio, check
-    echo                 which model is loaded ^(or load one^), and set
-    echo                 LM_STUDIO_MODEL to its exact identifier in .env.
-    echo                 ^(Skipping this means deep reasoning falls back to
-    echo                 rule-based assessments - the bot will still run.^)
-    echo.
-    choice /c YN /m "Continue anyway"
-    if errorlevel 2 exit /b 1
+    if "!LMSTUDIO_CODE!"=="200" (
+        echo [setup] LM_STUDIO_MODEL not set - checking what LM Studio has available ...
+        set PICKED_MODEL=
+        "%PY%" scripts\list_lm_studio_models.py > "%TEMP%\lmstudio_models.txt" 2>nul
+        set /a MODEL_COUNT=0
+        for /f "delims=" %%L in ('type "%TEMP%\lmstudio_models.txt" ^| find /c /v ""') do set MODEL_COUNT=%%L
+
+        if !MODEL_COUNT! EQU 0 (
+            echo [action needed] LM Studio is reachable but reported no models.
+            echo                 Download/load a model in LM Studio, then re-run this script.
+            echo.
+            choice /c YN /m "Continue anyway ^(rule-based fallback^)"
+            if errorlevel 2 exit /b 1
+        ) else if !MODEL_COUNT! EQU 1 (
+            rem --select 1 avoids fragile inline parsing of "1. <id>" when the id
+            rem itself contains dots (e.g. llama-3.1-8b-instruct).
+            for /f "delims=" %%R in ('"%PY%" scripts\list_lm_studio_models.py --select 1') do set PICKED_MODEL=%%R
+            echo [setup] Only one model available - using it: !PICKED_MODEL!
+            >> ".env" echo.
+            >> ".env" echo LM_STUDIO_MODEL=!PICKED_MODEL!
+        ) else (
+            echo.
+            echo [choose] LM Studio has multiple models available:
+            type "%TEMP%\lmstudio_models.txt"
+            echo.
+            set /p MODEL_CHOICE="Enter a number (default 1): "
+            if "!MODEL_CHOICE!"=="" set MODEL_CHOICE=1
+            for /f "delims=" %%R in ('"%PY%" scripts\list_lm_studio_models.py --select !MODEL_CHOICE!') do set PICKED_MODEL=%%R
+            if defined PICKED_MODEL (
+                echo [setup] Using: !PICKED_MODEL!
+                >> ".env" echo.
+                >> ".env" echo LM_STUDIO_MODEL=!PICKED_MODEL!
+            ) else (
+                echo [error] Invalid selection - LM_STUDIO_MODEL left unset.
+                choice /c YN /m "Continue anyway ^(rule-based fallback^)"
+                if errorlevel 2 exit /b 1
+            )
+        )
+    ) else (
+        echo [action needed] LM_STUDIO_MODEL is empty in .env, and LM Studio's
+        echo                 server isn't reachable to list models from.
+        echo                 ^(Deep reasoning will fall back to rule-based
+        echo                 assessments - the bot will still run.^)
+        echo.
+        choice /c YN /m "Continue anyway"
+        if errorlevel 2 exit /b 1
+    )
 )
 
 rem -- 6. PostgreSQL reachability check (hard requirement) ------------------
