@@ -37,15 +37,16 @@ news:
     fear_greed_url: https://production.dataviz.cnn.io/index/fearandgreed/graphdata
 
 llm:
-  #   hybrid  = local fast pre-trade + external heavy reasoning
+  #   hybrid  = local fast pre-trade (Ollama) + external heavy reasoning
   #   local   = everything through Ollama
-  #   external= everything through OpenAI/Anthropic
+  #   external= everything through the external.provider below
   #   none    = rule-based Hermes (no LLM calls)
   mode: external
   external:
-    provider: openai           # openai | anthropic
+    provider: openai           # openai | anthropic | lm_studio
     openai: {}
     anthropic: {}
+    lm_studio: {}
   local:
     provider: ollama
     timeout_seconds: 30

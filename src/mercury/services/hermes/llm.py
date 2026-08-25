@@ -1,7 +1,7 @@
 """LLM client abstraction for Hermes.
 
 Pluggable provider interface supporting:
-- OpenAI (and any OpenAI-compatible endpoint, incl. Ollama)
+- OpenAI (and any OpenAI-compatible endpoint, incl. Ollama and LM Studio)
 - Anthropic
 - rule-based fallback (no external calls)
 
@@ -179,6 +179,20 @@ def build_llm_client(
         url = base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
         m = model or os.getenv("OLLAMA_MODEL", "llama3.1:8b")
         return OpenAICompatClient(base_url=url, api_key="ollama", model=m)
+    if provider == "lm_studio":
+        url = base_url or os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
+        m = model or os.getenv("LM_STUDIO_MODEL", "")
+        if not m:
+            # LM Studio's model identifier is whatever the user has loaded in
+            # their own instance — there is no safe default to assume, so an
+            # empty LM_STUDIO_MODEL degrades to the rule-based fallback rather
+            # than sending an empty model string the server would reject.
+            logger.warning("LM_STUDIO_MODEL not set — using rule-based fallback")
+            return RuleBasedClient()
+        # LM Studio's local server doesn't validate the key, but the client
+        # still needs a non-empty string to send *some* Authorization header —
+        # a dummy value is fine and matches LM Studio's own documented convention.
+        return OpenAICompatClient(base_url=url, api_key="lm-studio", model=m)
     # default: OpenAI-compatible
     url = base_url or os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
     key = api_key or os.getenv("OPENAI_API_KEY", "")

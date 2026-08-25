@@ -437,9 +437,10 @@ class NewsProviderConfig(BaseModel):
 
 
 class ExternalLLMConfig(BaseModel):
-    provider: Literal["openai", "anthropic"] = "openai"
+    provider: Literal["openai", "anthropic", "lm_studio"] = "openai"
     openai: dict[str, Any] = Field(default_factory=dict)
     anthropic: dict[str, Any] = Field(default_factory=dict)
+    lm_studio: dict[str, Any] = Field(default_factory=dict)
 
 
 class LocalLLMConfig(BaseModel):
@@ -669,6 +670,13 @@ def load_config(config_dir: str | Path | None = None, *, environment: str | None
         mode_ = os.getenv("HERMES_LLM_PROVIDER", "")
         if mode_ in {"hybrid", "local", "external", "none"}:
             settings.providers.llm.mode = cast(Literal["hybrid", "local", "external", "none"], mode_)
+
+    if os.getenv("HERMES_EXTERNAL_PROVIDER"):
+        ext_provider = os.getenv("HERMES_EXTERNAL_PROVIDER", "")
+        if ext_provider in {"openai", "anthropic", "lm_studio"}:
+            settings.providers.llm.external.provider = cast(
+                Literal["openai", "anthropic", "lm_studio"], ext_provider
+            )
 
     # ── Eden OS agent mesh ───────────────────────────────────
     # Same variable names as Eden's agent_runtime/config.py (from_env).
