@@ -10,7 +10,7 @@ broker:
   backend: paper
   mt5:
     symbol: GOLD
-    timeframe: M5
+    timeframe: M15
     order_mode: MARKET
     magic: 77001
     slippage_points: 20
@@ -22,7 +22,7 @@ data:
   backend: mt5
   mt5:
     history_bars: 100000
-    default_timeframe: M5
+    default_timeframe: M15
 
 news:
   backends: [economic_calendar]        # enabled news adapters, e.g. [economic_calendar, rss]

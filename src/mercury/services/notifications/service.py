@@ -49,6 +49,7 @@ class NotificationService(Service):
         self.bus.subscribe("trade.opened", self._on_trade_opened)
         self.bus.subscribe("trade.closed", self._on_trade_closed)
         self.bus.subscribe("trade.rejected", self._on_trade_rejected)
+        self.bus.subscribe("signal.validated", self._on_signal_validated)
         self.bus.subscribe("signal.rejected", self._on_signal_rejected)
         self.bus.subscribe("hermes.proposal.backtested", self._on_proposal_backtested)
         self.bus.subscribe("strategy.promoted", self._on_strategy_promoted)
@@ -177,6 +178,26 @@ class NotificationService(Service):
             title="Signal Rejected", message="\n".join(f"• {r}" for r in reasons), level="warn"
         )
         # no whitelist entry for rejections — Telegram only
+
+    async def _on_signal_validated(self, event: Event) -> None:
+        p = event.payload or {}
+        sig = p.get("signal") or {}
+        try:
+            sig_dict = dict(sig) if not isinstance(sig, dict) else sig
+        except (TypeError, ValueError):
+            sig_dict = {}
+        direction = (sig_dict.get("direction") or "unknown").upper()
+        await self._notifier.send(
+            title="\U0001f50e Signal Detected (pending confirmation)",
+            message=(
+                f"{direction} {sig_dict.get('symbol', '?')} | {sig_dict.get('timeframe', '?')}\n"
+                f"Strategy: {sig_dict.get('strategy_id', '?')}\n"
+                f"Price: {sig_dict.get('price', '?')}\n"
+                f"SL: {sig_dict.get('sl', '-')} | TP: {sig_dict.get('tp', '-')}\n"
+                "Awaiting Hermes assessment + risk approval"
+            ),
+            level="info",
+        )
 
     async def _on_proposal_backtested(self, event: Event) -> None:
         p = event.payload or {}

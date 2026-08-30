@@ -3,17 +3,17 @@
 # Implements the discretionary SMC playbook mechanically:
 #   H1 bias (last H1 BOS) + H4 filter (must not oppose)
 #   Mandatory H1 liquidity sweep + one of (Order Block / H1 trendline
-#   bounce / H1+H4 alignment), M5 confirmation-close entry, SL beyond
-#   the block + 0.5 ATR(14) M5, BE at 1R, TP = next opposing M5
-#   liquidity (skip if < 2R), early exit on opposite M5 BOS.
+#   bounce / H1+H4 alignment), M15 confirmation-close entry, SL beyond
+#   the block + 0.5 ATR(14) M15, BE at 1R, TP = next opposing M15
+#   liquidity (skip if < 2R), early exit on opposite M15 BOS.
 # ──────────────────────────────────────────────────────────────
 
 strategies:
   - id: xauusd_m5_ict
     enabled: true
     symbol: GOLD
-    timeframe: M5
-    description: ICT/SMC — H1 bias, H4 filter, liquidity sweeps, order blocks, M5 confirmation close.
+    timeframe: M15
+    description: ICT/SMC — H1 bias, H4 filter, liquidity sweeps, order blocks, M15 confirmation close.
 
     order:
       order_type: market

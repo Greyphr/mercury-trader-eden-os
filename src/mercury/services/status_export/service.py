@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -53,9 +52,9 @@ class StatusExportService(BackgroundService):
     # ---- snapshot assembly --------------------------------------------------
 
     def _build_snapshot(self) -> dict[str, Any]:
-        from mercury.services.analytics.metrics import compute_metrics
         from mercury.models.orm import TradeRecord
         from mercury.models.schemas import TradeStatus
+        from mercury.services.analytics.metrics import compute_metrics
 
         db = self.db
         now = datetime.now(UTC)
@@ -64,13 +63,13 @@ class StatusExportService(BackgroundService):
         metrics = compute_metrics(db)
 
         # ---- equity curve (closed trades, ordered by closed_at) ----
-        closed_trades = (
-            db.session()
-            .query(TradeRecord)
-            .filter(TradeRecord.status == TradeStatus.CLOSED)
-            .order_by(TradeRecord.closed_at.asc())
-            .all()
-        )
+        with db.session() as session:
+            closed_trades = (
+                session.query(TradeRecord)
+                .filter(TradeRecord.status == TradeStatus.CLOSED)
+                .order_by(TradeRecord.closed_at.asc())
+                .all()
+            )
 
         cumulative_pnl = 0.0
         equity_curve: list[dict[str, Any]] = []
@@ -84,13 +83,13 @@ class StatusExportService(BackgroundService):
             })
 
         # ---- open positions ----
-        open_trades = (
-            db.session()
-            .query(TradeRecord)
-            .filter(TradeRecord.status == TradeStatus.OPEN)
-            .order_by(TradeRecord.opened_at.desc())
-            .all()
-        )
+        with db.session() as session:
+            open_trades = (
+                session.query(TradeRecord)
+                .filter(TradeRecord.status == TradeStatus.OPEN)
+                .order_by(TradeRecord.opened_at.desc())
+                .all()
+            )
         open_positions = [
             {
                 "symbol": t.symbol,

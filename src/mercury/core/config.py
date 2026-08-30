@@ -98,6 +98,7 @@ class EventAuditConfig(BaseModel):
         "trade.opened",
         "trade.closed",
         "trade.rejected",
+        "signal.validated",
         "signal.approved",
         "signal.rejected",
         "hermes.proposals",

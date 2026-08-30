@@ -27,7 +27,7 @@ def test_risk_defaults(settings):
 def test_strategy_config(settings):
     strategy = settings.strategies.strategies[0]
     assert strategy.symbol == "GOLD"
-    assert strategy.timeframe == "M5"
+    assert strategy.timeframe == "M15"
     assert strategy.order.magic == 77001
 
 
