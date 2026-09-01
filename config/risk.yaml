@@ -12,7 +12,12 @@ max_risk_per_trade_percent: 1.0
 sizing:
   mode: fixed_percent        # fixed_percent | adaptive
   fixed_percent: 0.5
-  max_volume: 10000          # hard cap on lots per order (XAUUSD broker max is 200; widened for now)
+  # Hard ceiling on lots per order. This is a CIRCUIT BREAKER — not a typical
+  # trade size — guarding against a runaway sizing bug (e.g. absurd SL distance
+  # or inflated equity) ever placing an order too large for the account.
+  # 2.0 lots of XAUUSD is ~200 oz (~$400k notional), far beyond a small-to-mid
+  # retail account; raise deliberately per-account only after sizing review.
+  max_volume: 2.0
   adaptive:
     enabled: false
     # Multiply fixed % by Hermes confidence discount (0.5..1.0).

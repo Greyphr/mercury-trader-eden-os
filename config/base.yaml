@@ -10,7 +10,7 @@ project:
 #   paper     = simulate fills locally (default, safe)
 #   read_only = collect data + reason only, never trade
 deployment:
-  mode: live
+  mode: paper
 
 # Active environment profile (see environments.yaml). Overridable with the
 # MERCURY_ENV env var or `mercury --env <name>`.

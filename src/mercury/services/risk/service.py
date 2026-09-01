@@ -7,6 +7,7 @@ filters, daily trade & drawdown limits, and a persisted kill switch.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -17,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 
 from mercury.core.config import session_allows
 from mercury.core.events import Event
+from mercury.core.symbols import SymbolMappingError, get_symbol_mapper
 from mercury.models.orm import SystemStateRecord, TradeRecord
 from mercury.models.schemas import Signal, TradeStatus
 from mercury.services.base import Service
@@ -49,6 +51,7 @@ class RiskManagerService(Service):
         self._last_quote: dict[str, Any] | None = None
         self._daily_pnl: float = 0.0
         self._daily_pnl_date: str = ""
+        self._mapper = get_symbol_mapper(self.settings)
 
     def set_equity_provider(self, provider: EquityProvider) -> None:
         self._equity_provider = provider
@@ -129,6 +132,8 @@ class RiskManagerService(Service):
         if equity is not None and equity < guards.min_account_equity:
             reasons.append(f"equity {equity:.2f} < {guards.min_account_equity}")
 
+        reasons.extend(self._check_trading_criteria(signal))
+
         if reasons:
             return RiskDecision(approved=False, reasons=reasons)
 
@@ -142,6 +147,56 @@ class RiskManagerService(Service):
         return RiskDecision(approved=True, volume=volume, risk_amount=risk_amount)
 
     # ── guards helpers ────────────────────────────────────────
+    def _check_trading_criteria(self, signal: Signal) -> list[str]:
+        """Enforce min SL / TP distance (in pips) and min reward:risk ratio.
+
+        Distances are converted from raw price to the instrument's pip units
+        using the symbol mapper's ``point`` value (1 pip == 1 point). A missing
+        SL or TP on a signal that requires one is a distinct rejection reason.
+        """
+        criteria = self.settings.trading_criteria
+        entry = signal.price
+        if not entry:
+            return []
+        try:
+            canonical = self._mapper.canonical(signal.symbol or "")
+            spec = self._mapper.spec(canonical)
+        except SymbolMappingError:
+            self.logger.warning("trading criteria: cannot resolve symbol %s", signal.symbol)
+            return []
+        point = spec.point or 1.0
+
+        reasons: list[str] = []
+        sl = signal.sl
+        if sl is None:
+            reasons.append("signal missing SL — required for criteria check")
+            return reasons
+        tp = signal.tp
+        if tp is None:
+            reasons.append("signal missing TP — required for criteria check")
+            return reasons
+
+        sl_distance = abs(entry - sl)
+        tp_distance = abs(tp - entry)
+        if sl_distance <= 0:
+            reasons.append("sl distance must be > 0")
+            return reasons
+
+        sl_pips = sl_distance / point
+        tp_pips = tp_distance / point
+        # Round to guard against float-precision artifacts when a distance lands
+        # exactly on the configured pip threshold (e.g. 0.1 / 0.01 == 10.0).
+        sl_pips = round(sl_pips, 4)
+        tp_pips = round(tp_pips, 4)
+        if sl_pips < criteria.min_sl_pips:
+            reasons.append(f"sl distance {sl_pips:.1f} pips < min {criteria.min_sl_pips}")
+        if tp_pips < criteria.min_tp_pips:
+            reasons.append(f"tp distance {tp_pips:.1f} pips < min {criteria.min_tp_pips}")
+        rr = round(tp_distance / sl_distance, 4)
+        if rr < criteria.min_risk_reward_ratio:
+            reasons.append(f"risk:reward {rr:.2f} < min {criteria.min_risk_reward_ratio}")
+        return reasons
+
     def _equity(self) -> float | None:
         if self._equity_provider is not None:
             try:
@@ -258,14 +313,19 @@ class RiskManagerService(Service):
             return 0.0, 0.0
         if equity is None:
             return 0.0, 0.0
+
+        # Per-symbol lot constraints (fall back to XAUUSD-like defaults if the
+        # symbol is unmapped, matching the previous hardcoded behaviour).
+        min_lot, lot_step = self._lot_bounds(signal.symbol or "")
+
         contract = sizing.contract_size or 100.0
         volume = (equity * risk_pct) / (sl_distance * contract)
-        if volume < 0.01 or volume > sizing.max_volume:
+        if volume < min_lot or volume > sizing.max_volume:
             self.logger.warning(
                 "computed volume out of range — trade rejected",
                 extra={
                     "volume": round(volume, 4),
-                    "min_volume": 0.01,
+                    "min_volume": min_lot,
                     "max_volume": sizing.max_volume,
                     "sl_distance": sl_distance,
                     "equity": equity,
@@ -274,4 +334,19 @@ class RiskManagerService(Service):
                 },
             )
             return 0.0, 0.0
+        # Floor (never round up) to the symbol's lot_step so the order is never
+        # rejected by the broker for violating the stepping rule.
+        volume = math.floor(volume / lot_step) * lot_step
+        if volume < min_lot:
+            return 0.0, 0.0
         return round(volume, 2), equity * risk_pct
+
+    def _lot_bounds(self, symbol: str) -> tuple[float, float]:
+        """Return (min_lot, lot_step) for a symbol, falling back to 0.01/0.01."""
+        try:
+            canonical = self._mapper.canonical(symbol)
+            spec = self._mapper.spec(canonical)
+        except SymbolMappingError:
+            self.logger.warning("position sizing: cannot resolve symbol %s", symbol)
+            return 0.01, 0.01
+        return spec.min_lot, spec.lot_step

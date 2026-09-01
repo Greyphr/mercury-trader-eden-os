@@ -74,6 +74,165 @@ def _risk_service(settings, db, *, equity=10000.0, session_check=True):
     return svc
 
 
+def _with_symbol(settings, symbol: str, spec):
+    """Register an extra symbol in the environment map for lot-step tests."""
+    from mercury.core.config import InstrumentContract
+
+    settings.environment.symbols[symbol] = InstrumentContract(
+        broker_symbol=spec["broker_symbol"],
+        preferred=False,
+        contract_size=spec.get("contract_size", 100.0),
+        point=spec.get("point", 0.01),
+        digits=spec.get("digits", 2),
+        min_lot=spec["min_lot"],
+        lot_step=spec["lot_step"],
+    )
+    return settings
+
+
+# ── Fix 2: max_volume ceiling ──────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_volume_above_default_max_rejected(settings, db, session_clock):
+    """The shipped max_volume (2.0 lots) is a hard ceiling: an inflated-equity
+    signal that would size above it must be rejected, not clamped."""
+    assert settings.risk.sizing.max_volume == 2.0
+    svc = _risk_service(settings, db, equity=500_000.0)  # unrealistically large account
+    tight = _signal().model_copy(update={"price": 2400.0, "sl": 2399.9, "tp": 2412.0})
+    decision = svc.evaluate(tight, {"confidence": 0.9})
+    assert not decision.approved
+    assert any("volume" in r.lower() and "out of range" in r.lower() for r in decision.reasons)
+
+
+# ── Fix 3: trading-criteria guard ──────────────────────────────
+
+@pytest.mark.asyncio
+async def test_signal_too_tight_sl_rejected(settings, db, session_clock):
+    svc = _risk_service(settings, db)
+    tight = _signal().model_copy(update={"price": 2400.0, "sl": 2399.99, "tp": 2412.0})
+    decision = svc.evaluate(tight, {"confidence": 0.9})
+    assert not decision.approved
+    assert any(
+        r.startswith("sl distance") and "pips < min" in r for r in decision.reasons
+    )
+
+
+@pytest.mark.asyncio
+async def test_signal_too_close_tp_rejected(settings, db, session_clock):
+    svc = _risk_service(settings, db)
+    close = _signal().model_copy(update={"price": 2400.0, "sl": 2395.0, "tp": 2400.01})
+    decision = svc.evaluate(close, {"confidence": 0.9})
+    assert not decision.approved
+    assert any(
+        r.startswith("tp distance") and "pips < min" in r for r in decision.reasons
+    )
+
+
+@pytest.mark.asyncio
+async def test_signal_bad_risk_reward_ratio_rejected(settings, db, session_clock):
+    svc = _risk_service(settings, db)
+    bad = _signal().model_copy(update={"price": 2400.0, "sl": 2395.0, "tp": 2406.0})
+    # RR = 6.0 / 5.0 = 1.2 < 1.5; SL/TP pips both >= 10 so only RR triggers
+    decision = svc.evaluate(bad, {"confidence": 0.9})
+    assert not decision.approved
+    assert any(
+        r.startswith("risk:reward") and "< min" in r for r in decision.reasons
+    )
+    assert not any("sl distance" in r for r in decision.reasons)
+    assert not any("tp distance" in r for r in decision.reasons)
+
+
+@pytest.mark.asyncio
+async def test_signal_missing_sl_or_tp_rejected(settings, db, session_clock):
+    svc = _risk_service(settings, db)
+    no_sl = _signal().model_copy(update={"sl": None})
+    decision = svc.evaluate(no_sl, {"confidence": 0.9})
+    assert not decision.approved
+    assert any("missing SL" in r for r in decision.reasons)
+
+    no_tp = _signal().model_copy(update={"tp": None})
+    decision = svc.evaluate(no_tp, {"confidence": 0.9})
+    assert not decision.approved
+    assert any("missing TP" in r for r in decision.reasons)
+
+
+@pytest.mark.asyncio
+async def test_signal_passes_all_trading_criteria(settings, db, session_clock):
+    """Normal XAUUSD ATR-range SL/TP (5.0/12.0 price distance, i.e. 500/1200
+    pips, RR 2.4) passes the criteria guard with no criteria reasons."""
+    svc = _risk_service(settings, db)
+    decision = svc.evaluate(_signal(), {"confidence": 0.9})
+    assert decision.approved
+    assert not any(
+        r.startswith(("sl distance", "tp distance", "risk:reward")) for r in decision.reasons
+    )
+
+
+# ── Fix 4: per-symbol min_lot / lot_step ───────────────────────
+
+@pytest.mark.asyncio
+async def test_position_size_xauusd_step_unchanged(settings, db, session_clock):
+    """XAUUSD lot_step=0.01: volumes floor to centi-lots as before."""
+    svc = _risk_service(settings, db, equity=10000.0)
+    decision = svc.evaluate(_signal(), {"confidence": 0.9})
+    assert decision.approved
+    # size for this signal is 0.1 lots; confirm it's an exact 0.01 multiple
+    assert decision.volume == pytest.approx(round(decision.volume / 0.01, 6) * 0.01)
+
+
+@pytest.mark.asyncio
+async def test_position_size_snaps_to_lot_step(settings, db, session_clock):
+    """A non-default lot_step floors the computed volume down to the nearest
+    multiple so the broker never rejects the order for violating the step."""
+    _with_symbol(
+        settings,
+        "SILVER",
+        {"broker_symbol": "XAGUSD", "min_lot": 0.5, "lot_step": 0.5, "point": 0.01},
+    )
+    svc = _risk_service(settings, db, equity=10000.0)
+    # raw volume = 50 / (0.4 * 100) = 1.25 lots -> floors to 1.0 (multiple of 0.5)
+    sig = _signal().model_copy(update={"symbol": "SILVER", "price": 30.0, "sl": 29.6, "tp": 32.0})
+    decision = svc.evaluate(sig, {"confidence": 0.9})
+    assert decision.approved
+    # lots must be an exact multiple of 0.5
+    assert decision.volume == pytest.approx(round(decision.volume / 0.5, 6) * 0.5)
+    assert decision.volume > 0
+    assert decision.volume == pytest.approx(1.0)
+
+
+@pytest.mark.asyncio
+async def test_position_size_below_min_lot_rejected(settings, db, session_clock):
+    """Flooring a computed volume below the symbol's min_lot rejects the trade,
+    even when the raw volume was above min_lot (isolated from the ceiling)."""
+    _with_symbol(
+        settings,
+        "SILVER",
+        {"broker_symbol": "XAGUSD", "min_lot": 3.0, "lot_step": 2.0, "point": 0.01},
+    )
+    settings.risk.sizing.max_volume = 10.0  # keep the ceiling out of the picture
+    svc = _risk_service(settings, db, equity=10000.0)
+    # raw volume 3.0 (>= min_lot, < max), but flooring to lot_step 2.0 gives
+    # 2.0 < min_lot -> must be rejected.
+    sig = _signal().model_copy(
+        update={"symbol": "SILVER", "price": 30.0, "sl": 29.833333, "tp": 32.5}
+    )
+    decision = svc.evaluate(sig, {"confidence": 0.9})
+    assert not decision.approved
+    assert any("volume" in r.lower() and "out of range" in r.lower() for r in decision.reasons)
+
+
+@pytest.mark.asyncio
+async def test_position_size_unmapped_symbol_falls_back(settings, db, session_clock):
+    """An unmapped symbol falls back to the 0.01 default lot floor instead of
+    raising, so risk sizing never hard-crashes on an unknown symbol."""
+    svc = _risk_service(settings, db, equity=10000.0)
+    sig = _signal().model_copy(update={"symbol": "UNKNOWN_METAL"})
+    decision = svc.evaluate(sig, {"confidence": 0.9})
+    # falls back to default min_lot/lot_step (0.01) and sizes normally
+    assert decision.approved
+    assert decision.volume > 0
+
+
 @pytest.mark.asyncio
 async def test_confident_signal_approved(settings, db, session_clock):
     svc = _risk_service(settings, db)
